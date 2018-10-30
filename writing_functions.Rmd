@@ -125,3 +125,108 @@ dynamite_reviews = bind_rows(
 )
 ```
 
+## for loops
+
+```{r}
+l = list(vec_numeric = 5:8,
+         mat         = matrix(1:8, 2, 4),
+         vec_logical = c(TRUE, FALSE),
+         summary     = summary(rnorm(1000))
+         )
+
+df = data_frame(
+  a = rnorm(20, 3, 1),
+  b = rnorm(20, 0, 5),
+  c = rnorm(20, 10, .2),
+  d = rnorm(20, -3, 1)
+)
+
+mean_and_sd = function(x) {
+  if (!is.numeric(x)) {
+    stop("Argument x should be numeric")
+  } else if (length(x) == 1) {
+    stop("Cannot be computed for length 1 vectors")
+  }
+  
+  mean_x = mean(x)
+  sd_x = sd(x)
+
+  tibble(
+    mean = mean_x, 
+    sd = sd_x
+  )
+}
+```
+
+write a for loop:
+
+```{r}
+output = vector("list", length = 4)
+
+for (i in 1:4) {
+  output[[i]] = mean_and_sd(df[[i]])
+}
+```
+
+## replace for loop with map
+
+```{r}
+output = map(df, mean_and_sd)
+
+# or use tidy to apply on some specific column
+df %>% 
+  select(a,b) %>% 
+  map(mean_and_sd)
+
+# default of output format of map is list, now we use some other format output
+output = map_df(df, mean_and_sd)
+```
+
+## nest list columns
+
+```{r}
+library(rnoaa)
+
+weather = 
+  meteo_pull_monitors(c("USW00094728", "USC00519397", "USS0023B17S"),
+                      var = c("PRCP", "TMIN", "TMAX"), 
+                      date_min = "2016-01-01",
+                      date_max = "2016-12-31") %>%
+  mutate(
+    name = recode(id, USW00094728 = "CentralPark_NY", 
+                      USC00519397 = "Waikiki_HA",
+                      USS0023B17S = "Waterhole_WA"),
+    tmin = tmin / 10,
+    tmax = tmax / 10) %>%
+  select(name, id, everything())
+
+weather_nest = 
+  weather %>% 
+  nest(date:tmin) # you could use group_by first to specify the column you wanna nest
+
+weather_nest %>% pull(name)
+weather_nest %>% pull(data)
+```
+
+unnest
+
+```{r}
+unnest(weather_nest)
+```
+
+## linear model
+
+```{r}
+# linear model for tmax and tmin column
+lm(tmax ~ tmin, data = weather_nest$data[[1]])
+lm(tmax ~ tmin, data = weather_nest$data[[2]])
+lm(tmax ~ tmin, data = weather_nest$data[[3]])
+
+# or use map function
+weather_lm = function(df) {
+  lm(tmax ~ tmin, data = df)
+}
+
+map(weather_nest$data, weather_lm)
+```
+
