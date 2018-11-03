@@ -230,3 +230,195 @@ weather_lm = function(df) {
 map(weather_nest$data, weather_lm)
 ```
 
+Then add the output as new column to the origin dataset
+
+```{r}
+weather_nest %>% 
+  mutate(lm_result = map(data, weather_lm))
+```
+
+## SLR
+
+```{r}
+set.seed(1)
+
+sim_regression = function(n, beta0 = 2, beta1 = 3) {
+  
+  sim_data = tibble(
+    x = rnorm(n, mean = 1, sd = 1),
+    y = beta0 + beta1 * x + rnorm(n, 0, 1)
+  )
+  
+  ls_fit = lm(y ~ x, data = sim_data)
+  
+  tibble(
+    beta0_hat = coef(ls_fit)[1],
+    beta1_hat = coef(ls_fit)[2]
+  )
+}
+
+output = vector("list", 100)
+
+for (i in 1:100) {
+  output[[i]] = sim_regression(30) # sample size = 30
+}
+
+sim_results = bind_rows(output)
+```
+
+using rerun instead
+
+```{r}
+sim_results = 
+  rerun(100, sim_regression(30, 2, 3)) %>% 
+  bind_rows()
+
+sim_results %>% 
+  ggplot(aes(x = beta0_hat, y = beta1_hat)) + 
+  geom_point()
+```
+
+gathering result
+
+```{r}
+sim_results %>% 
+  gather(key = parameter, value = estimate, beta0_hat:beta1_hat) %>% 
+  group_by(parameter) %>% 
+  summarize(emp_mean = mean(estimate),
+            emp_var = var(estimate)) %>% 
+  knitr::kable(digits = 3)
+```
+
+## n SLRs (for loop)
+
+```{r}
+n_list = list("n_30"  = 30, 
+              "n_60"  = 60, 
+              "n_120" = 120, 
+              "n_240" = 240)
+output = vector("list", length = 4)
+
+for (i in 1:4) {
+  output[[i]] = rerun(100, sim_regression(n_list[[i]])) %>% 
+    bind_rows
+}
+```
+
+or, we could use function and tidying to implement it
+
+```{r}
+simulate_n_regressions = function(n_runs = 100, n, beta0 = 2, beta1 = 3) {
+  
+  rerun(n_runs, sim_regression(n, beta0, beta1)) %>% 
+    bind_rows()
+  
+}
+
+sim_results = 
+  tibble(sample_size = c(30, 60, 120, 240)) %>% 
+  mutate(estimate_dfs = map(.x = sample_size, ~simulate_n_regressions(n = .x))) %>% 
+  unnest
+```
+
+or we run it 1000 times and plot
+
+```{r}
+sim_results = 
+  tibble(sample_size = c(30, 60, 120, 240)) %>% 
+  mutate(estimate_dfs = map(.x = sample_size, ~simulate_n_regressions(n_runs = 1000, n = .x))) %>% 
+  unnest
+
+sim_results %>% 
+  mutate(
+    sample_size = str_c("n = ", sample_size),
+    sample_size = fct_inorder(sample_size)) %>% 
+  ggplot(aes(x = sample_size, y = beta1_hat, fill = sample_size)) + 
+  geom_violin()
+```
+
+Then, look at the bivariate distribution of intercept and slope estimates across sample sizes.
+
+```{r}
+sim_results %>% 
+  mutate(
+    sample_size = str_c("n = ", sample_size),
+    sample_size = fct_inorder(sample_size)) %>% 
+  ggplot(aes(x = beta0_hat, y = beta1_hat)) + 
+  geom_point(alpha = .2) + 
+  facet_grid(~sample_size)
+```
+
+Lastly look at the empirical mean and variance of these estimates.
+
+```{r}
+sim_results %>% 
+  gather(key = parameter, value = estimate, beta0_hat:beta1_hat) %>% 
+  group_by(parameter, sample_size) %>% 
+  summarize(emp_mean = mean(estimate),
+            emp_var = var(estimate)) %>% 
+  knitr::kable(digits = 3)
+```
+
+## publication bias
+
+
+using different beta1 value
+
+```{r}
+sim_regression = function(n_samp = 30, beta0 = 2, beta1 = 3) {
+  
+  sim_data = tibble(
+    x = rnorm(n_samp),
+    y = beta0 + beta1 * x + rnorm(n_samp, 0, sqrt(50))
+  )
+  
+  ls_fit = lm(y ~ x, data = sim_data)
+  
+  broom::tidy(ls_fit) # cleanly format the results of lm
+  
+}
+
+sim_results = 
+  tibble(beta1_true = 0:6) %>% 
+  mutate(
+    estimate_dfs = map(.x = beta1_true, ~simulate_n_regressions(n_runs = 1000, n = 30, beta1 = .x))
+  )  
+```
+
+plot
+
+```{r}
+sim_results = 
+  sim_results %>% 
+  unnest() %>% 
+  filter(term == "x") %>% 
+  select(beta1_true, estimate, p.value) %>% 
+  mutate(significant = as.numeric(p.value < 0.05))
+
+sim_results %>% 
+  group_by(beta1_true) %>% 
+  summarise(proportion = mean(significant)) %>% 
+  ggplot(aes(x = beta1_true, y = proportion)) +
+  geom_line()
+```
+
+average of β̂ 1 on the y axis and the true value of β1 on the x axis (in red), along with the average of β̂ 1 in cases for which the null is reject (in blue)
+
+```{r}
+results_summary = 
+  sim_results %>% 
+  group_by(beta1_true) %>%
+  nest() %>% 
+  mutate(
+    all = map_dbl(.x = data, ~ .x %>% pull(estimate) %>% mean),
+    signif = map_dbl(.x = data, ~ .x %>% filter(significant == 1) %>% pull(estimate) %>% mean)
+  ) %>% 
+  select(-data) %>% 
+  gather(key = results, value = average, all:signif) 
+
+results_summary %>% 
+  ggplot(aes(x = beta1_true, y = average, color = results)) + 
+  geom_point() +
+  geom_path()
+```
+
